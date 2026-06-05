@@ -17,7 +17,7 @@ let scoreRules = {};
 let sportTypes = {};
 let sportDelays = {};
 let thirdPlaceSettings = {};
-let roundSchedules = {};
+let matchSchedules = {};
 let seedSettings = [];
 let resultPublished = false;
 let announcements = [];
@@ -36,7 +36,7 @@ DATA_DOC.onSnapshot((doc) => {
   sportTypes = data.sportTypes || {};
   sportDelays = data.sportDelays || {};
   thirdPlaceSettings = data.thirdPlaceSettings || {};
-  roundSchedules = data.roundSchedules || {};
+  matchSchedules = data.matchSchedules || {};
   seedSettings = data.seedSettings || [];
   resultPublished = data.resultPublished || false;
   announcements = data.announcements || [];
@@ -51,10 +51,13 @@ DATA_DOC.onSnapshot((doc) => {
     b: m.b,
     winner: m.winner || "",
     round: m.round || 1,
+    matchNo: m.matchNo || 0,
     auto: m.auto || false,
     type: m.type || "normal",
     seedId: m.seedId || ""
   }));
+
+  assignMissingMatchNumbers();
 
   sports.forEach(sport => {
     if(!scoreRules[sport]){
@@ -69,14 +72,41 @@ DATA_DOC.onSnapshot((doc) => {
     if(thirdPlaceSettings[sport] === undefined){
       thirdPlaceSettings[sport] = false;
     }
-    if(!roundSchedules[sport]){
-      roundSchedules[sport] = {};
+    if(!matchSchedules[sport]){
+      matchSchedules[sport] = {};
     }
   });
 
   dataLoaded = true;
   renderCurrentPage();
 });
+
+function assignMissingMatchNumbers(){
+  sports.forEach(sport => {
+    const sportMatches = matches.filter(m => m.sport === sport && m.type !== "thirdPlace");
+    const rounds = [...new Set(sportMatches.map(m => m.round))];
+
+    rounds.forEach(round => {
+      const list = sportMatches
+        .filter(m => m.round === round)
+        .sort((a,b) => a.id - b.id);
+
+      list.forEach((m,index) => {
+        if(!m.matchNo){
+          m.matchNo = index + 1;
+        }
+      });
+    });
+  });
+
+  matches
+    .filter(m => m.type === "thirdPlace")
+    .forEach(m => {
+      if(!m.matchNo){
+        m.matchNo = 1;
+      }
+    });
+}
 
 async function saveData(){
   await DATA_DOC.set({
@@ -87,7 +117,7 @@ async function saveData(){
     sportTypes,
     sportDelays,
     thirdPlaceSettings,
-    roundSchedules,
+    matchSchedules,
     seedSettings,
     resultPublished,
     announcements
@@ -171,7 +201,15 @@ function roundName(round){
 
 function matchLabel(match){
   if(match.type === "thirdPlace") return "3位決定戦";
-  return roundName(match.round);
+  return `${roundName(match.round)} 第${match.matchNo || 1}試合`;
+}
+
+function scheduleLabel(schedule){
+  if(schedule.type === "thirdPlace"){
+    return "3位決定戦";
+  }
+
+  return `${roundName(Number(schedule.round))} 第${schedule.matchNo}試合`;
 }
 
 function timeToMinutes(time){
@@ -221,9 +259,17 @@ function announcementLabel(type){
   return "📢 お知らせ";
 }
 
-function getScheduleFor(sport, round, type = "normal"){
-  const key = type === "thirdPlace" ? "thirdPlace" : String(round);
-  const schedule = roundSchedules[sport]?.[key];
+function scheduleKey(round, matchNo, type = "normal"){
+  if(type === "thirdPlace" || round === "thirdPlace"){
+    return "thirdPlace-1";
+  }
+
+  return `${round}-${matchNo}`;
+}
+
+function getScheduleFor(sport, round, type = "normal", matchNo = 1){
+  const key = scheduleKey(round, matchNo, type);
+  const schedule = matchSchedules[sport]?.[key];
 
   return {
     venue: schedule?.venue || "未定",
@@ -489,6 +535,8 @@ function renderBracketForSport(sport){
     .sort((a,b) => {
       if(a.round !== b.round) return a.round - b.round;
 
+      if(a.matchNo !== b.matchNo) return a.matchNo - b.matchNo;
+
       const aTime = timeToMinutes(a.start);
       const bTime = timeToMinutes(b.start);
 
@@ -536,7 +584,7 @@ function renderBracketForSport(sport){
     `;
 
     roundSeeds.forEach(seed => {
-      const alreadyCreated = matches.some(m => m.seedId === seed.id);
+      const alreadyCreated = matches.some(m => String(m.seedId) === String(seed.id));
 
       html += `
         <div style="
@@ -548,6 +596,7 @@ function renderBracketForSport(sport){
         ">
           <strong>⭐ シード</strong>
           <p>${seed.team}</p>
+          <p>第${seed.matchNo}試合予定</p>
           <p>相手：${opponentLabelFromSeed(seed)}</p>
           <p>📍 ${seed.venue}</p>
           <p>${alreadyCreated ? "試合作成済み" : "相手確定待ち"}</p>
@@ -591,6 +640,7 @@ function renderBracketForSport(sport){
           </div>
 
           <div style="margin-top:8px;font-size:13px;color:#555;">
+            <div>${matchLabel(match)}</div>
             <div>⏰ ${displayTime(match)}</div>
             <div>📍 ${match.venue}</div>
             <div>勝者：<strong>${match.winner || "未定"}</strong></div>
@@ -743,7 +793,8 @@ function showAdmin(){
     </div>
 
     <div class="card admin-panel">
-      <h2>⏰ 2回戦以降の予定設定</h2>
+      <h2>⏰ 2回戦以降の試合別予定設定</h2>
+
       <label>競技</label>
       <select id="scheduleSport">${sportOptions()}</select>
 
@@ -756,6 +807,9 @@ function showAdmin(){
         <option value="thirdPlace">3位決定戦</option>
       </select>
 
+      <label>試合番号</label>
+      <input type="number" id="scheduleMatchNo" min="1" value="1" placeholder="例：1">
+
       <label>会場</label>
       <select id="scheduleVenue">${venueOptions()}</select>
 
@@ -765,10 +819,10 @@ function showAdmin(){
       <label>終了時間</label>
       <input type="time" id="scheduleEnd">
 
-      <button onclick="saveRoundSchedule()">ラウンド予定を保存</button>
+      <button onclick="saveMatchSchedule()">試合予定を保存</button>
 
-      <h3>登録済みラウンド予定</h3>
-      ${renderRoundSchedules()}
+      <h3>登録済み試合別予定</h3>
+      ${renderMatchSchedules()}
     </div>
 
     <div class="card admin-panel">
@@ -787,6 +841,9 @@ function showAdmin(){
         <option value="4">準決勝</option>
         <option value="5">決勝</option>
       </select>
+
+      <label>試合番号</label>
+      <input type="number" id="seedMatchNo" min="1" value="1">
 
       <label>会場</label>
       <select id="seedVenue">${venueOptions()}</select>
@@ -869,6 +926,7 @@ function seedOpponentOptions(){
   let html = "";
 
   html += `<option disabled>--- 指定チーム ---</option>`;
+
   classes.forEach(c => {
     html += `<option value="team:${c}">${c}</option>`;
   });
@@ -884,6 +942,7 @@ function seedOpponentOptions(){
     .sort((a,b) => {
       if(a.sport !== b.sport) return a.sport.localeCompare(b.sport);
       if(a.round !== b.round) return a.round - b.round;
+      if(a.matchNo !== b.matchNo) return a.matchNo - b.matchNo;
       return a.id - b.id;
     })
     .forEach(m => {
@@ -897,49 +956,81 @@ function seedOpponentOptions(){
   return html;
 }
 
-async function saveRoundSchedule(){
+async function saveMatchSchedule(){
   const sport = document.getElementById("scheduleSport").value;
-  const round = document.getElementById("scheduleRound").value;
+  const roundValue = document.getElementById("scheduleRound").value;
+  const matchNo = Number(document.getElementById("scheduleMatchNo").value);
   const venue = document.getElementById("scheduleVenue").value;
   const start = document.getElementById("scheduleStart").value;
   const end = document.getElementById("scheduleEnd").value;
 
-  if(!sport || !round || !venue || !start || !end){
-    alert("競技・ラウンド・会場・時間を入力してください");
+  if(!sport || !roundValue || !matchNo || !venue || !start || !end){
+    alert("競技・ラウンド・試合番号・会場・時間を入力してください");
     return;
   }
 
-  if(!roundSchedules[sport]){
-    roundSchedules[sport] = {};
+  const type = roundValue === "thirdPlace" ? "thirdPlace" : "normal";
+  const round = roundValue === "thirdPlace" ? "thirdPlace" : Number(roundValue);
+  const key = scheduleKey(round, matchNo, type);
+
+  if(!matchSchedules[sport]){
+    matchSchedules[sport] = {};
   }
 
-  roundSchedules[sport][round] = {
+  matchSchedules[sport][key] = {
+    sport,
+    round,
+    matchNo,
+    type,
     venue,
     start,
     end
   };
 
+  applySavedScheduleToExistingMatches(sport, round, matchNo, type);
+
   await saveData();
 }
 
-function renderRoundSchedules(){
-  if(Object.keys(roundSchedules).length === 0){
-    return `<p>まだラウンド予定はありません。</p>`;
+function applySavedScheduleToExistingMatches(sport, round, matchNo, type){
+  matches.forEach(match => {
+    const sameSport = match.sport === sport;
+    const sameType = type === "thirdPlace"
+      ? match.type === "thirdPlace"
+      : match.type !== "thirdPlace";
+
+    const sameRound = type === "thirdPlace"
+      ? true
+      : Number(match.round) === Number(round);
+
+    const sameMatchNo = Number(match.matchNo || 1) === Number(matchNo);
+
+    if(sameSport && sameType && sameRound && sameMatchNo){
+      const s = getScheduleFor(sport, round, type, matchNo);
+      match.venue = s.venue;
+      match.start = s.start;
+      match.end = s.end;
+    }
+  });
+}
+
+function renderMatchSchedules(){
+  if(Object.keys(matchSchedules).length === 0){
+    return `<p>まだ試合別予定はありません。</p>`;
   }
 
   let html = "";
 
-  Object.keys(roundSchedules).forEach(sport => {
-    Object.keys(roundSchedules[sport]).forEach(round => {
-      const s = roundSchedules[sport][round];
-      const name = round === "thirdPlace" ? "3位決定戦" : roundName(Number(round));
+  Object.keys(matchSchedules).forEach(sport => {
+    Object.keys(matchSchedules[sport]).forEach(key => {
+      const s = matchSchedules[sport][key];
 
       html += `
         <div class="match">
-          <strong>${sport} / ${name}</strong>
+          <strong>${sport} / ${scheduleLabel(s)}</strong>
           <p>📍 ${s.venue}</p>
           <p>⏰ ${s.start}〜${s.end}</p>
-          <button class="danger" onclick="deleteRoundSchedule('${sport}','${round}')">
+          <button class="danger" onclick="deleteMatchSchedule('${sport}','${key}')">
             削除
           </button>
         </div>
@@ -950,10 +1041,10 @@ function renderRoundSchedules(){
   return html;
 }
 
-async function deleteRoundSchedule(sport, round){
-  if(!confirm("このラウンド予定を削除しますか？")) return;
+async function deleteMatchSchedule(sport, key){
+  if(!confirm("この試合予定を削除しますか？")) return;
 
-  delete roundSchedules[sport][round];
+  delete matchSchedules[sport][key];
 
   await saveData();
 }
@@ -962,10 +1053,11 @@ async function addSeedSetting(){
   const sport = document.getElementById("seedSport").value;
   const team = document.getElementById("seedTeam").value;
   const round = Number(document.getElementById("seedRound").value);
+  const matchNo = Number(document.getElementById("seedMatchNo").value);
   const venue = document.getElementById("seedVenue").value;
   const opponentValue = document.getElementById("seedOpponent").value;
 
-  if(!sport || !team || !round || !venue || !opponentValue){
+  if(!sport || !team || !round || !matchNo || !venue || !opponentValue){
     alert("シード情報をすべて入力してください");
     return;
   }
@@ -996,6 +1088,7 @@ async function addSeedSetting(){
     sport,
     team,
     round,
+    matchNo,
     venue,
     opponentType,
     opponentTeam: opponentType === "team" ? opponentId : "",
@@ -1016,14 +1109,15 @@ function renderSeedSettings(){
     .slice()
     .sort((a,b) => {
       if(a.sport !== b.sport) return a.sport.localeCompare(b.sport);
-      return a.round - b.round;
+      if(a.round !== b.round) return a.round - b.round;
+      return a.matchNo - b.matchNo;
     })
     .map(seed => {
-      const created = matches.some(m => m.seedId === seed.id);
+      const created = matches.some(m => String(m.seedId) === String(seed.id));
 
       return `
         <div class="match">
-          <strong>${seed.sport} / ${roundName(seed.round)}</strong>
+          <strong>${seed.sport} / ${roundName(seed.round)} 第${seed.matchNo}試合</strong>
           <p>⭐ シード：${seed.team}</p>
           <p>相手：${opponentLabelFromSeed(seed)}</p>
           <p>📍 ${seed.venue}</p>
@@ -1055,7 +1149,7 @@ function applySeedSettings(sport){
     const opponent = getSeedOpponent(seed);
     if(!opponent) return;
 
-    const schedule = getScheduleFor(seed.sport, seed.round);
+    const schedule = getScheduleFor(seed.sport, seed.round, "normal", seed.matchNo);
 
     matches.push({
       id: Date.now() + Math.random(),
@@ -1067,6 +1161,7 @@ function applySeedSettings(sport){
       b: opponent,
       winner: "",
       round: seed.round,
+      matchNo: seed.matchNo,
       auto: true,
       type: "normal",
       seedId: seed.id
@@ -1228,7 +1323,7 @@ async function addSport(){
   sportTypes[value] = type;
   sportDelays[value] = 0;
   thirdPlaceSettings[value] = thirdPlace;
-  roundSchedules[value] = {};
+  matchSchedules[value] = {};
   scoreRules[value] = { first: 50, second: 30, third: 20 };
 
   await saveData();
@@ -1284,6 +1379,10 @@ async function addMatch(){
     }
   }
 
+  const round1Matches = matches.filter(
+    m => m.sport === sport && m.round === 1 && m.type !== "thirdPlace"
+  );
+
   matches.push({
     id: Date.now(),
     sport,
@@ -1294,6 +1393,7 @@ async function addMatch(){
     b,
     winner: "",
     round: 1,
+    matchNo: round1Matches.length + 1,
     auto: false,
     type: "normal",
     seedId: ""
@@ -1381,6 +1481,7 @@ function renderAdminMatches(){
       if(a.type !== "thirdPlace" && b.type === "thirdPlace") return -1;
 
       if(a.round !== b.round) return a.round - b.round;
+      if(a.matchNo !== b.matchNo) return a.matchNo - b.matchNo;
 
       const aTime = timeToMinutes(a.start);
       const bTime = timeToMinutes(b.start);
@@ -1469,7 +1570,10 @@ function generateNextRound(sport){
 
   const currentRoundMatches = normalMatches
     .filter(m => m.round === maxRound)
-    .sort((a,b) => a.id - b.id);
+    .sort((a,b) => {
+      if(a.matchNo !== b.matchNo) return a.matchNo - b.matchNo;
+      return a.id - b.id;
+    });
 
   if(currentRoundMatches.length <= 1) return;
 
@@ -1477,18 +1581,21 @@ function generateNextRound(sport){
 
   if(!allFinished) return;
 
+  const nextRound = maxRound + 1;
+
   const nextRoundAlreadyExists =
-    normalMatches.some(m => m.round === maxRound + 1 && !m.seedId);
+    normalMatches.some(m => m.round === nextRound && !m.seedId);
 
   if(nextRoundAlreadyExists) return;
 
   const winners = currentRoundMatches.map(m => m.winner);
 
+  let createdNo = 1;
+
   for(let i = 0; i < winners.length; i += 2){
     if(!winners[i + 1]) break;
 
-    const nextRound = maxRound + 1;
-    const schedule = getScheduleFor(sport, nextRound);
+    const schedule = getScheduleFor(sport, nextRound, "normal", createdNo);
 
     matches.push({
       id: Date.now() + Math.random(),
@@ -1500,10 +1607,13 @@ function generateNextRound(sport){
       b: winners[i + 1],
       winner: "",
       round: nextRound,
+      matchNo: createdNo,
       auto: true,
       type: "normal",
       seedId: ""
     });
+
+    createdNo++;
   }
 
   if(thirdPlaceSettings[sport] && currentRoundMatches.length === 2){
@@ -1513,7 +1623,7 @@ function generateNextRound(sport){
     if(!thirdAlreadyExists){
       const loserA = getLoser(currentRoundMatches[0]);
       const loserB = getLoser(currentRoundMatches[1]);
-      const schedule = getScheduleFor(sport, 0, "thirdPlace");
+      const schedule = getScheduleFor(sport, "thirdPlace", "thirdPlace", 1);
 
       if(loserA && loserB){
         matches.push({
@@ -1525,7 +1635,8 @@ function generateNextRound(sport){
           a: loserA,
           b: loserB,
           winner: "",
-          round: maxRound + 1,
+          round: nextRound,
+          matchNo: 1,
           auto: true,
           type: "thirdPlace",
           seedId: ""
@@ -1659,7 +1770,7 @@ async function deleteSport(index){
   delete sportTypes[sport];
   delete sportDelays[sport];
   delete thirdPlaceSettings[sport];
-  delete roundSchedules[sport];
+  delete matchSchedules[sport];
 
   seedSettings = seedSettings.filter(s => s.sport !== sport);
   matches = matches.filter(m => m.sport !== sport);
@@ -1693,7 +1804,7 @@ async function resetAllData(){
   sportTypes = {};
   sportDelays = {};
   thirdPlaceSettings = {};
-  roundSchedules = {};
+  matchSchedules = {};
   seedSettings = [];
   resultPublished = false;
   announcements = [];
