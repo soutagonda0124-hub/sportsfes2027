@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2027年度高校スポーツ大会</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="header">
+    <h1>🏆 2027年度高校スポーツ大会</h1>
+  </header>
+
+  <main id="page">
+    <div class="card">
+      <h2>読み込み中...</h2>
+      <p>Firebaseに接続しています。</p>
+    </div>
+  </main>
+
+  <nav class="nav">
+    <button onclick="showHome()">🏠<br>ホーム</button>
+    <button onclick="showSchedule()">📅<br>予定</button>
+    <button onclick="showTournament()">🏆<br>トーナメント</button>
+    <button onclick="showSports()">🎯<br>競技</button>
+    <button onclick="showAdminLogin()">🔐<br>管理</button>
+  </nav>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyAiMANfm9CKuBLrPNPLfIaD6B8ENsgNA4E",
+      authDomain: "sports-5a592.firebaseapp.com",
+      projectId: "sports-5a592",
+      storageBucket: "sports-5a592.firebasestorage.app",
+      messagingSenderId: "14359132855",
+      appId: "1:14359132855:web:b6f2e9321e04bba2f92b32",
+      measurementId: "G-RQKT9H6DD2"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+
+    window.db = firebase.firestore();
+  </script>
+
+  <script src="app.js"></script>
+
+</body>
+</html>

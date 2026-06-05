@@ -1,0 +1,198 @@
+/* ===== 共通 ===== */
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+  font-family:"Segoe UI",sans-serif;
+}
+
+body{
+  background:#f4f7f4;
+  color:#333;
+  padding-bottom:90px;
+}
+
+/* ===== ヘッダー ===== */
+
+.header{
+  background:#2e7d32;
+  color:white;
+  text-align:center;
+  padding:18px;
+  box-shadow:0 2px 6px rgba(0,0,0,0.15);
+}
+
+.header h1{
+  font-size:22px;
+}
+
+/* ===== カード ===== */
+
+.card{
+  background:white;
+  margin:15px;
+  padding:15px;
+  border-radius:14px;
+  box-shadow:0 2px 6px rgba(0,0,0,0.1);
+}
+
+.card h2{
+  color:#2e7d32;
+  margin-bottom:10px;
+}
+
+.card h3{
+  margin-top:10px;
+  margin-bottom:8px;
+}
+
+/* ===== 入力系 ===== */
+
+select,
+input,
+button,
+textarea{
+  width:100%;
+  margin-top:10px;
+  padding:12px;
+  border-radius:10px;
+  border:1px solid #ccc;
+  font-size:15px;
+}
+
+button{
+  background:#2e7d32;
+  color:white;
+  border:none;
+  cursor:pointer;
+  font-weight:bold;
+}
+
+button:hover{
+  opacity:0.9;
+}
+
+/* ===== 管理者 ===== */
+
+.admin-panel{
+  background:#fffde7;
+  border:2px solid #ffb300;
+}
+
+.danger{
+  background:#c62828;
+}
+
+.danger:hover{
+  background:#b71c1c;
+}
+
+.secondary{
+  background:#1565c0;
+}
+
+/* ===== 試合カード ===== */
+
+.match{
+  border:1px solid #ddd;
+  border-radius:10px;
+  padding:12px;
+  margin-top:10px;
+}
+
+.match-title{
+  font-weight:bold;
+  font-size:17px;
+}
+
+.winner{
+  color:#2e7d32;
+  font-weight:bold;
+}
+
+/* ===== 予定表 ===== */
+
+.schedule-item{
+  border-left:6px solid #2e7d32;
+  background:#fafafa;
+  padding:10px;
+  margin-top:10px;
+  border-radius:8px;
+}
+
+.time{
+  font-weight:bold;
+}
+
+.place{
+  color:#1565c0;
+}
+
+/* ===== 競技カード ===== */
+
+.sport-card{
+  border:1px solid #ddd;
+  border-radius:10px;
+  padding:12px;
+  margin-top:10px;
+}
+
+.sport-title{
+  font-size:18px;
+  font-weight:bold;
+}
+
+/* ===== 会場タグ ===== */
+
+.venue-tag{
+  display:inline-block;
+  padding:5px 10px;
+  border-radius:20px;
+  background:#e8f5e9;
+  color:#2e7d32;
+  margin-top:5px;
+  font-size:13px;
+}
+
+/* ===== 下部ナビ ===== */
+
+.nav{
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  display:flex;
+  background:white;
+  border-top:1px solid #ddd;
+  box-shadow:0 -2px 5px rgba(0,0,0,0.1);
+}
+
+.nav button{
+  flex:1;
+  background:white;
+  color:#333;
+  border:none;
+  border-radius:0;
+  padding:10px;
+  font-size:13px;
+}
+
+.nav button:hover{
+  background:#f0f0f0;
+}
+
+/* ===== スマホ対応 ===== */
+
+@media (max-width:600px){
+
+  .header h1{
+    font-size:18px;
+  }
+
+  .card{
+    margin:10px;
+    padding:12px;
+  }
+
+}
