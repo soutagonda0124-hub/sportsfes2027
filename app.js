@@ -10,7 +10,6 @@ const classes = [
 const grades = ["1年", "2年", "3年"];
 
 let selectedClass = localStorage.getItem("selectedClass") || "";
-
 let sports = [];
 let venues = [];
 let matches = [];
@@ -18,6 +17,8 @@ let scoreRules = {};
 let sportTypes = {};
 let sportDelays = {};
 let thirdPlaceSettings = {};
+let roundSchedules = {};
+let seedSettings = [];
 let resultPublished = false;
 let announcements = [];
 
@@ -35,6 +36,8 @@ DATA_DOC.onSnapshot((doc) => {
   sportTypes = data.sportTypes || {};
   sportDelays = data.sportDelays || {};
   thirdPlaceSettings = data.thirdPlaceSettings || {};
+  roundSchedules = data.roundSchedules || {};
+  seedSettings = data.seedSettings || [];
   resultPublished = data.resultPublished || false;
   announcements = data.announcements || [];
 
@@ -49,7 +52,8 @@ DATA_DOC.onSnapshot((doc) => {
     winner: m.winner || "",
     round: m.round || 1,
     auto: m.auto || false,
-    type: m.type || "normal"
+    type: m.type || "normal",
+    seedId: m.seedId || ""
   }));
 
   sports.forEach(sport => {
@@ -64,6 +68,9 @@ DATA_DOC.onSnapshot((doc) => {
     }
     if(thirdPlaceSettings[sport] === undefined){
       thirdPlaceSettings[sport] = false;
+    }
+    if(!roundSchedules[sport]){
+      roundSchedules[sport] = {};
     }
   });
 
@@ -80,6 +87,8 @@ async function saveData(){
     sportTypes,
     sportDelays,
     thirdPlaceSettings,
+    roundSchedules,
+    seedSettings,
     resultPublished,
     announcements
   });
@@ -95,30 +104,40 @@ function renderCurrentPage(){
   if(currentPage === "admin" && isAdmin) showAdmin();
 }
 
-function classOptions(){
-  return classes.map(c => `<option>${c}</option>`).join("");
+function classOptions(selected = ""){
+  return classes.map(c => `
+    <option ${c === selected ? "selected" : ""}>${c}</option>
+  `).join("");
 }
 
-function teamOptions(){
+function teamOptions(selected = ""){
   return `
     <option disabled>--- クラス ---</option>
-    ${classes.map(c => `<option>${c}</option>`).join("")}
+    ${classes.map(c => `
+      <option ${c === selected ? "selected" : ""}>${c}</option>
+    `).join("")}
     <option disabled>--- 学年競技用 ---</option>
-    ${grades.map(g => `<option>${g}</option>`).join("")}
+    ${grades.map(g => `
+      <option ${g === selected ? "selected" : ""}>${g}</option>
+    `).join("")}
   `;
 }
 
-function sportOptions(){
+function sportOptions(selected = ""){
   if(sports.length === 0){
     return `<option value="">競技を追加してください</option>`;
   }
-  return sports.map(s => `<option>${s}</option>`).join("");
+
+  return sports.map(s => `
+    <option ${s === selected ? "selected" : ""}>${s}</option>
+  `).join("");
 }
 
 function venueOptions(selected = ""){
   if(venues.length === 0){
     return `<option value="">会場を追加してください</option>`;
   }
+
   return venues.map(v => `
     <option ${v === selected ? "selected" : ""}>${v}</option>
   `).join("");
@@ -181,7 +200,9 @@ function getDelay(sport){
 function displayTime(match){
   const delay = getDelay(match.sport);
 
-  if(!match.start) return "時間未定";
+  if(!match.start){
+    return "時間未定";
+  }
 
   const delayedStart = addMinutesToTime(match.start, delay);
   const delayedEnd = match.end ? addMinutesToTime(match.end, delay) : "";
@@ -200,6 +221,45 @@ function announcementLabel(type){
   return "📢 お知らせ";
 }
 
+function getScheduleFor(sport, round, type = "normal"){
+  const key = type === "thirdPlace" ? "thirdPlace" : String(round);
+  const schedule = roundSchedules[sport]?.[key];
+
+  return {
+    venue: schedule?.venue || "未定",
+    start: schedule?.start || "",
+    end: schedule?.end || ""
+  };
+}
+
+function opponentLabelFromSeed(seed){
+  if(seed.opponentType === "team"){
+    return seed.opponentTeam;
+  }
+
+  const match = matches.find(m => String(m.id) === String(seed.opponentMatchId));
+
+  if(!match){
+    return "指定試合が見つかりません";
+  }
+
+  return `${matchLabel(match)}：${match.a} vs ${match.b} の勝者`;
+}
+
+function getSeedOpponent(seed){
+  if(seed.opponentType === "team"){
+    return seed.opponentTeam;
+  }
+
+  const match = matches.find(m => String(m.id) === String(seed.opponentMatchId));
+
+  if(!match || !match.winner){
+    return "";
+  }
+
+  return match.winner;
+}
+
 function saveClass(){
   const select = document.getElementById("classSelect");
 
@@ -215,6 +275,7 @@ function saveClass(){
 
 function showHome(){
   currentPage = "home";
+
   const next = getNextMatchForClass(selectedClass);
 
   document.getElementById("page").innerHTML = `
@@ -224,9 +285,7 @@ function showHome(){
 
       <select id="classSelect">
         <option value="">クラスを選択</option>
-        ${classes.map(c => `
-          <option ${c === selectedClass ? "selected" : ""}>${c}</option>
-        `).join("")}
+        ${classOptions(selectedClass)}
       </select>
 
       <button onclick="saveClass()">クラスを保存</button>
@@ -267,6 +326,7 @@ function showHome(){
       <p>競技数：${sports.length}</p>
       <p>会場数：${venues.length}</p>
       <p>試合数：${matches.length}</p>
+      <p>シード設定数：${seedSettings.length}</p>
     </div>
   `;
 }
@@ -389,7 +449,8 @@ function showTournament(){
 
   let html = `
     <div class="card">
-      <h2>🏆 トーナメント</h2>
+      <h2>🏆 トーナメント表</h2>
+      <p>横にスクロールできます。</p>
   `;
 
   if(matches.length === 0){
@@ -399,57 +460,169 @@ function showTournament(){
 
     sportsList.forEach(sport => {
       const delay = getDelay(sport);
-      const thirdText = thirdPlaceSettings[sport] ? "3位決定戦あり" : "3位決定戦なし（同率3位）";
+      const thirdText = thirdPlaceSettings[sport]
+        ? "3位決定戦あり"
+        : "3位決定戦なし（同率3位）";
 
       html += `
-        <h3>${sport}</h3>
-        <p>${thirdText}</p>
-        ${
-          delay > 0
-          ? `<p class="winner">現在 ${delay}分遅れ</p>`
-          : `<p>遅れなし</p>`
-        }
-      `;
-
-      const sportMatches = matches
-        .filter(m => m.sport === sport)
-        .sort((a,b) => {
-          if(a.type === "thirdPlace" && b.type !== "thirdPlace") return 1;
-          if(a.type !== "thirdPlace" && b.type === "thirdPlace") return -1;
-
-          if(a.round !== b.round) return a.round - b.round;
-
-          const aTime = timeToMinutes(a.start);
-          const bTime = timeToMinutes(b.start);
-
-          if(aTime !== null && bTime !== null){
-            return (aTime + delay) - (bTime + delay);
+        <div class="sport-card">
+          <h3>${sport}</h3>
+          <p>${thirdText}</p>
+          ${
+            delay > 0
+            ? `<p class="winner">現在 ${delay}分遅れ</p>`
+            : `<p>遅れなし</p>`
           }
-
-          return (a.start || "99:99").localeCompare(b.start || "99:99");
-        });
-
-      sportMatches.forEach(match => {
-        html += `
-          <div class="match">
-            <div class="match-title">
-              ${matchLabel(match)}
-              ${match.auto ? "（自動生成）" : ""}
-            </div>
-
-            <p><strong>${match.a} vs ${match.b}</strong></p>
-            <p>競技：${match.sport}</p>
-            <p>📍 場所：${match.venue}</p>
-            <p>⏰ 時間：${displayTime(match)}</p>
-            <p>勝者：<span class="winner">${match.winner || "未定"}</span></p>
-          </div>
-        `;
-      });
+          ${renderBracketForSport(sport)}
+        </div>
+      `;
     });
   }
 
   html += `</div>`;
   document.getElementById("page").innerHTML = html;
+}
+
+function renderBracketForSport(sport){
+  const normalMatches = matches
+    .filter(m => m.sport === sport && m.type !== "thirdPlace")
+    .sort((a,b) => {
+      if(a.round !== b.round) return a.round - b.round;
+
+      const aTime = timeToMinutes(a.start);
+      const bTime = timeToMinutes(b.start);
+
+      if(aTime !== null && bTime !== null){
+        return (aTime + getDelay(a.sport)) - (bTime + getDelay(b.sport));
+      }
+
+      return (a.start || "99:99").localeCompare(b.start || "99:99");
+    });
+
+  const thirdMatch = matches.find(m => m.sport === sport && m.type === "thirdPlace");
+  const sportSeeds = seedSettings.filter(s => s.sport === sport);
+
+  if(normalMatches.length === 0 && sportSeeds.length === 0){
+    return `<p>この競技の試合はまだありません。</p>`;
+  }
+
+  const rounds = [...new Set([
+    ...normalMatches.map(m => m.round),
+    ...sportSeeds.map(s => Number(s.round))
+  ])].sort((a,b) => a - b);
+
+  let html = `
+    <div style="overflow-x:auto;padding:10px 0;">
+      <div style="display:flex;gap:14px;align-items:flex-start;min-width:max-content;">
+  `;
+
+  rounds.forEach(round => {
+    const roundMatches = normalMatches.filter(m => m.round === round);
+    const roundSeeds = sportSeeds.filter(s => Number(s.round) === Number(round));
+
+    html += `
+      <div style="min-width:220px;">
+        <div style="
+          background:#2e7d32;
+          color:white;
+          padding:8px;
+          border-radius:8px;
+          text-align:center;
+          font-weight:bold;
+          margin-bottom:10px;
+        ">
+          ${roundName(round)}
+        </div>
+    `;
+
+    roundSeeds.forEach(seed => {
+      const alreadyCreated = matches.some(m => m.seedId === seed.id);
+
+      html += `
+        <div style="
+          border:2px dashed #fbc02d;
+          border-radius:12px;
+          background:#fffde7;
+          margin-bottom:14px;
+          padding:10px;
+        ">
+          <strong>⭐ シード</strong>
+          <p>${seed.team}</p>
+          <p>相手：${opponentLabelFromSeed(seed)}</p>
+          <p>📍 ${seed.venue}</p>
+          <p>${alreadyCreated ? "試合作成済み" : "相手確定待ち"}</p>
+        </div>
+      `;
+    });
+
+    roundMatches.forEach(match => {
+      const winnerA = match.winner === match.a;
+      const winnerB = match.winner === match.b;
+
+      html += `
+        <div style="
+          border:2px solid #c8e6c9;
+          border-radius:12px;
+          background:white;
+          margin-bottom:14px;
+          padding:10px;
+          box-shadow:0 2px 5px rgba(0,0,0,0.08);
+        ">
+          <div style="
+            padding:8px;
+            border-radius:8px;
+            background:${winnerA ? "#e8f5e9" : "#fafafa"};
+            font-weight:${winnerA ? "bold" : "normal"};
+          ">
+            ${winnerA ? "✅ " : ""}${match.a}
+          </div>
+
+          <div style="text-align:center;font-size:12px;color:#777;margin:4px 0;">
+            vs
+          </div>
+
+          <div style="
+            padding:8px;
+            border-radius:8px;
+            background:${winnerB ? "#e8f5e9" : "#fafafa"};
+            font-weight:${winnerB ? "bold" : "normal"};
+          ">
+            ${winnerB ? "✅ " : ""}${match.b}
+          </div>
+
+          <div style="margin-top:8px;font-size:13px;color:#555;">
+            <div>⏰ ${displayTime(match)}</div>
+            <div>📍 ${match.venue}</div>
+            <div>勝者：<strong>${match.winner || "未定"}</strong></div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  });
+
+  html += `</div></div>`;
+
+  if(thirdMatch){
+    html += `
+      <div style="
+        margin-top:15px;
+        padding:12px;
+        border:2px solid #fbc02d;
+        border-radius:12px;
+        background:#fffde7;
+      ">
+        <h3>🥉 3位決定戦</h3>
+        <p><strong>${thirdMatch.a} vs ${thirdMatch.b}</strong></p>
+        <p>⏰ ${displayTime(thirdMatch)}</p>
+        <p>📍 ${thirdMatch.venue}</p>
+        <p>勝者：<strong>${thirdMatch.winner || "未定"}</strong></p>
+      </div>
+    `;
+  }
+
+  return html;
 }
 
 function showSports(){
@@ -556,17 +729,77 @@ function showAdmin(){
       <label>予定終了時間</label>
       <input type="time" id="matchEnd">
 
-      <label>チームA（クラス競技ならクラス、学年競技なら学年）</label>
+      <label>チームA</label>
       <select id="teamA">
         ${teamOptions()}
       </select>
 
-      <label>チームB（クラス競技ならクラス、学年競技なら学年）</label>
+      <label>チームB</label>
       <select id="teamB">
         ${teamOptions()}
       </select>
 
       <button onclick="addMatch()">試合を追加</button>
+    </div>
+
+    <div class="card admin-panel">
+      <h2>⏰ 2回戦以降の予定設定</h2>
+      <label>競技</label>
+      <select id="scheduleSport">${sportOptions()}</select>
+
+      <label>ラウンド</label>
+      <select id="scheduleRound">
+        <option value="2">2回戦</option>
+        <option value="3">準々決勝</option>
+        <option value="4">準決勝</option>
+        <option value="5">決勝</option>
+        <option value="thirdPlace">3位決定戦</option>
+      </select>
+
+      <label>会場</label>
+      <select id="scheduleVenue">${venueOptions()}</select>
+
+      <label>開始時間</label>
+      <input type="time" id="scheduleStart">
+
+      <label>終了時間</label>
+      <input type="time" id="scheduleEnd">
+
+      <button onclick="saveRoundSchedule()">ラウンド予定を保存</button>
+
+      <h3>登録済みラウンド予定</h3>
+      ${renderRoundSchedules()}
+    </div>
+
+    <div class="card admin-panel">
+      <h2>⭐ シード設定</h2>
+
+      <label>競技</label>
+      <select id="seedSport">${sportOptions()}</select>
+
+      <label>シードチーム</label>
+      <select id="seedTeam">${teamOptions()}</select>
+
+      <label>開始ラウンド</label>
+      <select id="seedRound">
+        <option value="2">2回戦</option>
+        <option value="3">準々決勝</option>
+        <option value="4">準決勝</option>
+        <option value="5">決勝</option>
+      </select>
+
+      <label>会場</label>
+      <select id="seedVenue">${venueOptions()}</select>
+
+      <label>試合相手</label>
+      <select id="seedOpponent">
+        ${seedOpponentOptions()}
+      </select>
+
+      <button onclick="addSeedSetting()">シードを追加</button>
+
+      <h3>登録済みシード</h3>
+      ${renderSeedSettings()}
     </div>
 
     <div class="card admin-panel">
@@ -632,6 +865,215 @@ function showAdmin(){
   `;
 }
 
+function seedOpponentOptions(){
+  let html = "";
+
+  html += `<option disabled>--- 指定チーム ---</option>`;
+  classes.forEach(c => {
+    html += `<option value="team:${c}">${c}</option>`;
+  });
+
+  grades.forEach(g => {
+    html += `<option value="team:${g}">${g}</option>`;
+  });
+
+  html += `<option disabled>--- 試合の勝者 ---</option>`;
+
+  matches
+    .filter(m => m.type !== "thirdPlace")
+    .sort((a,b) => {
+      if(a.sport !== b.sport) return a.sport.localeCompare(b.sport);
+      if(a.round !== b.round) return a.round - b.round;
+      return a.id - b.id;
+    })
+    .forEach(m => {
+      html += `
+        <option value="match:${m.id}">
+          ${m.sport} / ${matchLabel(m)} / ${m.a} vs ${m.b} の勝者
+        </option>
+      `;
+    });
+
+  return html;
+}
+
+async function saveRoundSchedule(){
+  const sport = document.getElementById("scheduleSport").value;
+  const round = document.getElementById("scheduleRound").value;
+  const venue = document.getElementById("scheduleVenue").value;
+  const start = document.getElementById("scheduleStart").value;
+  const end = document.getElementById("scheduleEnd").value;
+
+  if(!sport || !round || !venue || !start || !end){
+    alert("競技・ラウンド・会場・時間を入力してください");
+    return;
+  }
+
+  if(!roundSchedules[sport]){
+    roundSchedules[sport] = {};
+  }
+
+  roundSchedules[sport][round] = {
+    venue,
+    start,
+    end
+  };
+
+  await saveData();
+}
+
+function renderRoundSchedules(){
+  if(Object.keys(roundSchedules).length === 0){
+    return `<p>まだラウンド予定はありません。</p>`;
+  }
+
+  let html = "";
+
+  Object.keys(roundSchedules).forEach(sport => {
+    Object.keys(roundSchedules[sport]).forEach(round => {
+      const s = roundSchedules[sport][round];
+      const name = round === "thirdPlace" ? "3位決定戦" : roundName(Number(round));
+
+      html += `
+        <div class="match">
+          <strong>${sport} / ${name}</strong>
+          <p>📍 ${s.venue}</p>
+          <p>⏰ ${s.start}〜${s.end}</p>
+          <button class="danger" onclick="deleteRoundSchedule('${sport}','${round}')">
+            削除
+          </button>
+        </div>
+      `;
+    });
+  });
+
+  return html;
+}
+
+async function deleteRoundSchedule(sport, round){
+  if(!confirm("このラウンド予定を削除しますか？")) return;
+
+  delete roundSchedules[sport][round];
+
+  await saveData();
+}
+
+async function addSeedSetting(){
+  const sport = document.getElementById("seedSport").value;
+  const team = document.getElementById("seedTeam").value;
+  const round = Number(document.getElementById("seedRound").value);
+  const venue = document.getElementById("seedVenue").value;
+  const opponentValue = document.getElementById("seedOpponent").value;
+
+  if(!sport || !team || !round || !venue || !opponentValue){
+    alert("シード情報をすべて入力してください");
+    return;
+  }
+
+  const [opponentType, opponentId] = opponentValue.split(":");
+
+  if(team === opponentId){
+    alert("同じチーム同士は登録できません");
+    return;
+  }
+
+  if(sportTypes[sport] === "grade"){
+    if(!isGradeTeam(team)){
+      alert("学年競技のシードは学年を選んでください");
+      return;
+    }
+  }
+
+  if(sportTypes[sport] === "class"){
+    if(isGradeTeam(team)){
+      alert("クラス競技のシードはクラスを選んでください");
+      return;
+    }
+  }
+
+  seedSettings.push({
+    id: Date.now() + Math.random(),
+    sport,
+    team,
+    round,
+    venue,
+    opponentType,
+    opponentTeam: opponentType === "team" ? opponentId : "",
+    opponentMatchId: opponentType === "match" ? opponentId : ""
+  });
+
+  applySeedSettings(sport);
+
+  await saveData();
+}
+
+function renderSeedSettings(){
+  if(seedSettings.length === 0){
+    return `<p>シード設定はまだありません。</p>`;
+  }
+
+  return seedSettings
+    .slice()
+    .sort((a,b) => {
+      if(a.sport !== b.sport) return a.sport.localeCompare(b.sport);
+      return a.round - b.round;
+    })
+    .map(seed => {
+      const created = matches.some(m => m.seedId === seed.id);
+
+      return `
+        <div class="match">
+          <strong>${seed.sport} / ${roundName(seed.round)}</strong>
+          <p>⭐ シード：${seed.team}</p>
+          <p>相手：${opponentLabelFromSeed(seed)}</p>
+          <p>📍 ${seed.venue}</p>
+          <p>${created ? "試合作成済み" : "相手確定待ち"}</p>
+          <button class="danger" onclick="deleteSeedSetting(${seed.id})">
+            削除
+          </button>
+        </div>
+      `;
+    }).join("");
+}
+
+async function deleteSeedSetting(id){
+  if(!confirm("このシード設定を削除しますか？")) return;
+
+  seedSettings = seedSettings.filter(s => String(s.id) !== String(id));
+  matches = matches.filter(m => String(m.seedId) !== String(id));
+
+  await saveData();
+}
+
+function applySeedSettings(sport){
+  const seeds = seedSettings.filter(s => s.sport === sport);
+
+  seeds.forEach(seed => {
+    const alreadyCreated = matches.some(m => String(m.seedId) === String(seed.id));
+    if(alreadyCreated) return;
+
+    const opponent = getSeedOpponent(seed);
+    if(!opponent) return;
+
+    const schedule = getScheduleFor(seed.sport, seed.round);
+
+    matches.push({
+      id: Date.now() + Math.random(),
+      sport: seed.sport,
+      venue: schedule.venue !== "未定" ? schedule.venue : seed.venue,
+      start: schedule.start,
+      end: schedule.end,
+      a: seed.team,
+      b: opponent,
+      winner: "",
+      round: seed.round,
+      auto: true,
+      type: "normal",
+      seedId: seed.id
+    });
+  });
+}
+
 async function addAnnouncement(){
   const type = document.getElementById("announcementType").value;
   const title = document.getElementById("announcementTitle").value.trim();
@@ -680,6 +1122,7 @@ async function deleteAnnouncement(id){
   if(!confirm("このお知らせを削除しますか？")) return;
 
   announcements = announcements.filter(a => a.id !== id);
+
   await saveData();
 }
 
@@ -738,24 +1181,31 @@ async function setDelay(index){
   const value = Number(document.getElementById(`delay-${index}`).value);
 
   sportDelays[sport] = Math.max(0, value);
+
   await saveData();
 }
 
 async function increaseDelay(index, minutes){
   const sport = sports[index];
+
   sportDelays[sport] = getDelay(sport) + minutes;
+
   await saveData();
 }
 
 async function decreaseDelay(index, minutes){
   const sport = sports[index];
+
   sportDelays[sport] = Math.max(0, getDelay(sport) - minutes);
+
   await saveData();
 }
 
 async function clearDelay(index){
   const sport = sports[index];
+
   sportDelays[sport] = 0;
+
   await saveData();
 }
 
@@ -778,6 +1228,7 @@ async function addSport(){
   sportTypes[value] = type;
   sportDelays[value] = 0;
   thirdPlaceSettings[value] = thirdPlace;
+  roundSchedules[value] = {};
   scoreRules[value] = { first: 50, second: 30, third: 20 };
 
   await saveData();
@@ -797,6 +1248,7 @@ async function addVenue(){
   }
 
   venues.push(value);
+
   await saveData();
 }
 
@@ -843,7 +1295,8 @@ async function addMatch(){
     winner: "",
     round: 1,
     auto: false,
-    type: "normal"
+    type: "normal",
+    seedId: ""
   });
 
   await saveData();
@@ -980,7 +1433,7 @@ function renderAdminMatches(){
 }
 
 async function updateMatchInfo(id){
-  const match = matches.find(m => m.id === id);
+  const match = matches.find(m => String(m.id) === String(id));
   if(!match) return;
 
   match.venue = document.getElementById(`venue-${id}`).value || "未定";
@@ -991,11 +1444,13 @@ async function updateMatchInfo(id){
 }
 
 async function setWinner(id,winner){
-  const match = matches.find(m => m.id === id);
+  const match = matches.find(m => String(m.id) === String(id));
   if(!match) return;
 
   match.winner = winner;
+
   generateNextRound(match.sport);
+  applySeedSettings(match.sport);
 
   await saveData();
 }
@@ -1007,6 +1462,7 @@ function getLoser(match){
 
 function generateNextRound(sport){
   const normalMatches = matches.filter(m => m.sport === sport && m.type !== "thirdPlace");
+
   if(normalMatches.length === 0) return;
 
   const maxRound = Math.max(...normalMatches.map(m => m.round));
@@ -1018,10 +1474,11 @@ function generateNextRound(sport){
   if(currentRoundMatches.length <= 1) return;
 
   const allFinished = currentRoundMatches.every(m => m.winner);
+
   if(!allFinished) return;
 
   const nextRoundAlreadyExists =
-    normalMatches.some(m => m.round === maxRound + 1);
+    normalMatches.some(m => m.round === maxRound + 1 && !m.seedId);
 
   if(nextRoundAlreadyExists) return;
 
@@ -1030,18 +1487,22 @@ function generateNextRound(sport){
   for(let i = 0; i < winners.length; i += 2){
     if(!winners[i + 1]) break;
 
+    const nextRound = maxRound + 1;
+    const schedule = getScheduleFor(sport, nextRound);
+
     matches.push({
       id: Date.now() + Math.random(),
       sport,
-      venue: "未定",
-      start: "",
-      end: "",
+      venue: schedule.venue,
+      start: schedule.start,
+      end: schedule.end,
       a: winners[i],
       b: winners[i + 1],
       winner: "",
-      round: maxRound + 1,
+      round: nextRound,
       auto: true,
-      type: "normal"
+      type: "normal",
+      seedId: ""
     });
   }
 
@@ -1052,20 +1513,22 @@ function generateNextRound(sport){
     if(!thirdAlreadyExists){
       const loserA = getLoser(currentRoundMatches[0]);
       const loserB = getLoser(currentRoundMatches[1]);
+      const schedule = getScheduleFor(sport, 0, "thirdPlace");
 
       if(loserA && loserB){
         matches.push({
           id: Date.now() + Math.random(),
           sport,
-          venue: "未定",
-          start: "",
-          end: "",
+          venue: schedule.venue,
+          start: schedule.start,
+          end: schedule.end,
           a: loserA,
           b: loserB,
           winner: "",
           round: maxRound + 1,
           auto: true,
-          type: "thirdPlace"
+          type: "thirdPlace",
+          seedId: ""
         });
       }
     }
@@ -1088,10 +1551,14 @@ function addScoreToTeam(scores, team, points){
 
 function calculateScores(){
   const scores = {};
-  classes.forEach(c => scores[c] = 0);
+
+  classes.forEach(c => {
+    scores[c] = 0;
+  });
 
   sports.forEach(sport => {
     const normalMatches = matches.filter(m => m.sport === sport && m.type !== "thirdPlace");
+
     if(normalMatches.length === 0) return;
 
     const maxRound = Math.max(...normalMatches.map(m => m.round));
@@ -1111,6 +1578,7 @@ function calculateScores(){
 
     if(thirdPlaceSettings[sport]){
       const thirdMatch = matches.find(m => m.sport === sport && m.type === "thirdPlace");
+
       if(thirdMatch && thirdMatch.winner){
         addScoreToTeam(scores, thirdMatch.winner, rule.third);
       }
@@ -1191,6 +1659,10 @@ async function deleteSport(index){
   delete sportTypes[sport];
   delete sportDelays[sport];
   delete thirdPlaceSettings[sport];
+  delete roundSchedules[sport];
+
+  seedSettings = seedSettings.filter(s => s.sport !== sport);
+  matches = matches.filter(m => m.sport !== sport);
 
   await saveData();
 }
@@ -1199,13 +1671,15 @@ async function deleteVenue(index){
   if(!confirm("この会場を削除しますか？")) return;
 
   venues.splice(index,1);
+
   await saveData();
 }
 
 async function deleteMatch(id){
   if(!confirm("この試合を削除しますか？")) return;
 
-  matches = matches.filter(m => m.id !== id);
+  matches = matches.filter(m => String(m.id) !== String(id));
+
   await saveData();
 }
 
@@ -1219,6 +1693,8 @@ async function resetAllData(){
   sportTypes = {};
   sportDelays = {};
   thirdPlaceSettings = {};
+  roundSchedules = {};
+  seedSettings = [];
   resultPublished = false;
   announcements = [];
 
